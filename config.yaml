@@ -1,0 +1,5 @@
+env:
+  PROJECT_ID: "gooday-generative-ai-dev" # TODO: update to your project ID
+  SERVICE_NAME: "my-flask-app" # TODO: update to your service name
+  REGION: "us-central1" # TODO: update to your region
+  KEY: "VALUE"

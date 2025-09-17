@@ -1,0 +1,59 @@
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches:
+      - dev
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up yq
+        uses: mikefarah/yq@v4
+
+      - name: Load deployment config from config.yaml
+        id: config
+        run: |
+          echo "PROJECT_ID=$(yq e '.env.PROJECT_ID' config.yaml)" >> $GITHUB_OUTPUT
+          echo "SERVICE_NAME=$(yq e '.env.SERVICE_NAME' config.yaml)" >> $GITHUB_OUTPUT
+          echo "REGION=$(yq e '.env.REGION' config.yaml)" >> $GITHUB_OUTPUT
+          echo "ENV_VARS=$(yq e '.env | to_entries | .[] | .key + "=" + .value' config.yaml | paste -sd, -)" >> $GITHUB_OUTPUT
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          workload_identity_provider: 'projects/${{ steps.config.outputs.PROJECT_ID }}/locations/global/workloadIdentityPools/github-pool/providers/github-provider'
+          service_account: 'github-deployer@${{ steps.config.outputs.PROJECT_ID }}.iam.gserviceaccount.com'
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v1
+        with:
+          project_id: ${{ steps.config.outputs.PROJECT_ID }}
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ steps.config.outputs.REGION }}-docker.pkg.dev
+
+      - name: Build and push Docker image
+        id: build
+        run: |
+          IMAGE=${{ steps.config.outputs.REGION }}-docker.pkg.dev/${{ steps.config.outputs.PROJECT_ID }}/${{ steps.config.outputs.SERVICE_NAME }}:latest
+          docker build -t $IMAGE .
+          docker push $IMAGE
+          echo "IMAGE_URL=$IMAGE" >> $GITHUB_OUTPUT
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ${{ steps.config.outputs.SERVICE_NAME }} \
+            --image ${{ steps.build.outputs.IMAGE_URL }} \
+            --region ${{ steps.config.outputs.REGION }} \
+            --platform managed \
+            --allow-unauthenticated \
+            --set-env-vars "${{ steps.config.outputs.ENV_VARS }}"
